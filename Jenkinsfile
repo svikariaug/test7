@@ -1,6 +1,61 @@
 pipeline {
     agent any
 
+    environment {
+        // Версии на момент ноября 2025 — актуальные стабильные
+        CHROME_VERSION = "131.0.6778.85"     // проверь актуальную на https://googlechromelabs.github.io/chrome-for-testing/
+        CHROMEDRIVER_VERSION = "131.0.6778.85"
+    }
+
+    stages {
+        stage('Подготовка окружения (Python + Chrome + Chromedriver)') {
+            steps {
+                sh '''
+                    set -e
+
+                    echo "=== УСТАНОВКА PYTHON 3 ==="
+                    if ! command -v python3 >/dev/null 2>&1; then
+                        echo "Python3 не найден — устанавливаем"
+                        if [ -f /etc/debian_version ]; then
+                            apt-get update && apt-get install -y python3 python3-pip
+                        elif [ -f /etc/centos-release ] || [ -f /etc/rocky-release ]; then
+                            yum install -y python3 python3-pip || dnf install -y python3 python3-pip
+                        else
+                            echo "Неизвестный дистрибутив — установи python3 вручную"
+                            exit 1
+                        fi
+                    fi
+                    python3 --version
+
+                    echo "=== УСТАНОВКА ЗАВИСИМОСТЕЙ PYTHON ==="
+                    python3 -m pip install --upgrade pip
+                    python3 -m pip install requests selenium
+
+                    echo "=== СКАЧИВАНИЕ CHROME ==="
+                    mkdir -p chrome-linux64
+                    if [ ! -f chrome-linux64/chrome ]; then
+                        wget -q https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VERSION}/linux64/chrome-linux64.zip
+                        unzip -q chrome-linux64.zip
+                        mv chrome-linux64/chrome chrome-linux64/chrome-bin
+                        chmod +x chrome-linux64/chrome-bin
+                        ln -sf chrome-bin chrome-linux64/chrome
+                    fi
+
+                    echo "=== СКАЧИВАНИЕ CHROMEDRIVER ==="
+                    mkdir -p chromedriver-linux64
+                    if [ ! -f chromedriver-linux64/chromedriver ]; then
+                        wget -q https://storage.googleapis.com/chrome-for-testing-public/${CHROMEDRIVER_VERSION}/linux64/chromedriver-linux64.zip
+                        unzip -q chromedriver-linux64.zip
+                        mv chromedriver-linux64/chromedriver chromedriver-linux64/chromedriver
+                        chmod +x chromedriver-linux64/chromedriver
+                    fi
+
+                    echo "=== ОКРУЖЕНИЕ ГОТОВО ==="
+                    ls -la chrome-linux64/chrome chromedriver-linux64/chromedriver
+                '''
+            }
+        }
+
     stages {
         stage('Информация о среде') {
             steps {
