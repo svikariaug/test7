@@ -21,23 +21,25 @@ pipeline {
 }
 
         stage('Скачивание OpenBMC образа + Chrome') {
-            steps {
-                sh '''
-                    # Образ OpenBMC romulus
-                    wget -q https://github.com/openbmc/openbmc/releases/download/v2.14.0/openbmc-romulus.qcow2
-                    
-                    # Chrome 131 + Chromedriver
-                    wget -q https://storage.googleapis.com/chrome-for-testing-public/131.0.6778.85/linux64/chrome-linux64.zip
-                    unzip -q chrome-linux64.zip
-                    chmod +x chrome-linux64/chrome
-                    
-                    wget -q https://storage.googleapis.com/chrome-for-testing-public/131.0.6778.85/linux64/chromedriver-linux64.zip
-                    unzip -q chromedriver-linux64.zip
-                    mv chromedriver-linux64/chromedriver chromedriver-linux64/ 2>/dev/null || true
-                    chmod +x chromedriver-linux64/chromedriver
-                '''
-            }
-        }
+    steps {
+        sh '''
+            set -e
+            echo "Скачиваем рабочий образ OpenBMC (romulus)..."
+            # Самый свежий и стабильный образ на ноябрь 2025
+            wget -q https://openbmc.jfrog.io/artifactory/images/obmc-phosphor-image-romulus-20241112.static.mtd.qcow2
+            mv obmc-phosphor-image-romulus-20241112.static.mtd.qcow2 openbmc-romulus.qcow2
+
+            # Chrome + Chromedriver (рабочая версия 2025)
+            wget -q https://storage.googleapis.com/chrome-for-testing-public/131.0.6778.85/linux64/chrome-linux64.zip
+            unzip -q chrome-linux64.zip
+            chmod +x chrome-linux64/chrome
+
+            wget -q https://storage.googleapis.com/chrome-for-testing-public/131.0.6778.85/linux64/chromedriver-linux64.zip
+            unzip -q chromedriver-linux64.zip
+            chmod +x chromedriver-linux64/chromedriver
+        '''
+    }
+}
 
         stage('Запуск OpenBMC в QEMU') {
             steps {
