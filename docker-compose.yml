@@ -1,0 +1,17 @@
+services:
+  jenkins:
+    image: jenkins/jenkins:lts
+    container_name: jenkins-lab
+    privileged: true
+    user: root
+    ports:
+      - "8080:8080"
+      - "50000:50000"
+    volumes:
+      - jenkins_lab_data:/var/jenkins_home
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /home/komal-tyt/Desktop/3 semestr/testir/testir_laba7/romulus:/var/jenkins_home/romulus:ro
+    restart: unless-stopped
+
+volumes:
+  jenkins_lab_data:
