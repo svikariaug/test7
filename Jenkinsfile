@@ -2,37 +2,7 @@ pipeline {
     agent any
 
     stages {
-        stage('Установка всех зависимостей') {
-    steps {
-        sh '''
-            echo "=== УСТАНОВКА ЗАВИСИМОСТЕЙ (ОБХОДИМ exit code 100) ===" > deps_report.txt
-
-            # Обходим ошибку сети и репозиториев в новых образах Jenkins
-            apt-get update --allow-releaseinfo-change -o Acquire::Retries=3 || apt-get update || true >> deps_report.txt 2>&1
-
-            # Устанавливаем всё, что нужно (игнорируем отдельные ошибки)
-            DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-                qemu-system-arm \
-                python3-pip \
-                chromium-browser \
-                chromium-chromedriver \
-                ca-certificates \
-                curl >> deps_report.txt 2>&1 || echo "Часть пакетов уже установлена" >> deps_report.txt
-
-            # Python-пакеты от пользователя (всегда работает)
-            python3 -m pip install --user --break-system-packages selenium requests webdriver-manager || \
-            python3 -m pip install --user selenium requests webdriver-manager >> deps_report.txt 2>&1
-
-            echo "ВСЁ УСТАНОВЛЕНО УСПЕШНО" >> deps_report.txt
-            which qemu-system-arm >> deps_report.txt 2>&1 || echo "qemu не найден (но это не страшно)"
-            which chromium-browser >> deps_report.txt 2>&1
-            python3 -c "import selenium; print('Selenium OK')" >> deps_report.txt 2>&1
-        '''
-    }
-    post { always { archiveArtifacts 'deps_report.txt' } }
-}
-
-        stage('Проверка наличия образа OpenBMC') {
+                stage('Проверка наличия образа OpenBMC') {
             steps {
                 sh '''
                     echo "=== ПРОВЕРКА ФАЙЛОВ ===" > file_check.txt
