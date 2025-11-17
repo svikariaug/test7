@@ -2,63 +2,66 @@ pipeline {
     agent any
 
     stages {
-       stage('Подготовка окружения') {
-    steps {
-        sh '''
-            set -e
-            echo "Установка зависимостей..."
-            sudo apt-get update
-            sudo apt-get install -y --no-install-recommends \\
-                qemu-system-aarch64 python3 python3-pip wget unzip ca-certificates \\
-                libnss3 libgtk-3-0 libasound2 libatk-bridge2.0-0 libdrm2 \\
-                libxcomposite1 libxdamage1 libxrandr2 libgbm1 libpango-1.0-0 \\
-                libcairo2 libcups2 libatk1.0-0 fonts-liberation
+        stage('Подготовка окружения') {
+            steps {
+                sh '''
+                    set -e
+                    echo "Установка зависимостей..."
+                    sudo apt-get update
+                    sudo apt-get install -y --no-install-recommends \\
+                        qemu-system-aarch64 qemu-utils python3 python3-pip wget unzip ca-certificates base64 \\
+                        libnss3 libgtk-3-0 libasound2 libatk-bridge2.0-0 libdrm2 \\
+                        libxcomposite1 libxdamage1 libxrandr2 libgbm1 libpango-1.0-0 \\
+                        libcairo2 libcups2 libatk1.0-0 fonts-liberation
 
-            # ← ЭТА СТРОКА НОВАЯ, РАБОЧАЯ ДЛЯ DEBIAN 13
-            pip3 install --break-system-packages --no-cache-dir requests selenium
-        '''
-    }
-}
+                    pip3 install --break-system-packages --no-cache-dir requests selenium
+                    export PATH="$HOME/.local/bin:$PATH"
+                '''
+            }
+        }
 
-        stage('Скачивание OpenBMC образа + Chrome') {
-    steps {
-        sh '''
-            set -e
-            echo "Скачиваем готовый qcow2-образ OpenBMC romulus (рабочий на ноябрь 2025)"
-            # Это официальный qcow2-образ, который точно работает с -M romulus-bmc
-            wget -q https://github.com/openbmc/openbmc/releases/download/ibm-v2.14.0/obmc-phosphor-image-romulus-ibm.qcow2
-            mv obmc-phosphor-image-romulus-ibm.qcow2 openbmc-romulus.qcow2
+        stage('Скачивание OpenBMC образа из официального CI + Chrome') {
+            steps {
+                sh '''
+                    set -e
+                    echo "Скачиваем свежий образ romulus из официального OpenBMC CI..."
+                    wget -q "https://jenkins.openbmc.org/job/ci-openbmc/lastSuccessfulBuild/distro=ubuntu,label=docker-builder,target=romulus/artifact/openbmc/build/tmp/deploy/images/romulus/*zip*/romulus.zip" -O romulus.zip
+                    
+                    echo "Распаковка и конвертация в qcow2..."
+                    unzip -q romulus.zip
+                    qemu-img convert -f raw -O qcow2 romulus.static.mtd openbmc-romulus.qcow2
+                    
+                    # Chrome + Chromedriver
+                    wget -q https://storage.googleapis.com/chrome-for-testing-public/131.0.6778.85/linux64/chrome-linux64.zip
+                    unzip -q chrome-linux64.zip
+                    chmod +x chrome-linux64/chrome
 
-            # Chrome + Chromedriver (последняя стабильная связка)
-            wget -q https://storage.googleapis.com/chrome-for-testing-public/131.0.6778.85/linux64/chrome-linux64.zip
-            unzip -q chrome-linux64.zip
-            chmod +x chrome-linux64/chrome
+                    wget -q https://storage.googleapis.com/chrome-for-testing-public/131.0.6778.85/linux64/chromedriver-linux64.zip
+                    unzip -q chromedriver-linux64.zip
+                    mv chromedriver-linux64/chromedriver chromedriver-linux64/ 2>/dev/null || true
+                    chmod +x chromedriver-linux64/chromedriver
+                '''
+            }
+        }
 
-            wget -q https://storage.googleapis.com/chrome-for-testing-public/131.0.6778.85/linux64/chromedriver-linux64.zip
-            unzip -q chromedriver-linux64.zip
-            chmod +x chromedriver-linux64/chromedriver
-        '''
-    }
-}
+        stage('Запуск OpenBMC в QEMU') {
+            steps {
+                sh '''
+                    set -e
+                    echo "Запуск OpenBMC в QEMU..."
+                    qemu-system-aarch64 -m 2G -M romulus-bmc \\
+                        -drive file=openbmc-romulus.qcow2,format=qcow2,if=virtio \\
+                        -nic user,hostfwd=tcp::2443-:443,hostfwd=tcp::2222-:22 \\
+                        -nographic &
+                    echo $! > qemu.pid
+                    
+                    echo "Ожидание полной загрузки OpenBMC (~120 сек)..."
+                    sleep 120  # Для полной инициализации Redfish/WebUI
+                '''
+            }
+        }
 
-stage('Запуск OpenBMC в QEMU') {
-    steps {
-        sh '''
-            set -e
-            echo "Запуск OpenBMC в QEMU..."
-            qemu-system-aarch64 -m 2G -M romulus-bmc \\
-                -drive file=openbmc-romulus.qcow2,format=qcow2,if=virtio \\
-                -nic user,hostfwd=tcp::2443-:443,hostfwd=tcp::2222-:22 \\
-                -nographic &
-            echo $! > qemu.pid
-            
-            echo "Ожидание полной загрузки OpenBMC (~90 сек)..."
-            sleep 90   # увеличил до 90 сек — образ чуть тяжелее
-        '''
-    }
-}
-
-        stage('Redfish + WebUI тесты (твои 5 оригинальных тестов)') {
+        stage('Redfish + WebUI тесты (5 оригинальных тестов)') {
             steps {
                 sh '''
                     set -e
@@ -161,7 +164,6 @@ PY5
                     echo " ВСЁ УСПЕШНО! @svikari_aug — ты сделал это!"
                     echo "================================================="
                 '''
-                // Сохраняем скриншоты как артефакты
                 archiveArtifacts artifacts: '*.png', allowEmptyArchive: true
             }
         }
@@ -169,11 +171,14 @@ PY5
         stage('Нагрузочное тестирование') {
             steps {
                 sh '''
-                    echo "Запуск 50 параллельных логинов..."
+                    set -e
+                    echo "Запуск 50 параллельных Redfish логинов..."
                     for i in {1..50}; do
-                        curl -sk -X POST https://127.0.0.1:2443/login \\
-                             -H "Content-Type: application/json" \\
-                             -d '{"username":"root","password":"0penBmc"}' > /dev/null 2>&1 &
+                        python3 -c "
+import requests
+requests.post('https://127.0.0.1:2443/redfish/v1/SessionService/Sessions',
+              json={'UserName':'root','Password':'0penBmc'}, verify=False)
+" &
                     done
                     wait
                     echo "Нагрузочное тестирование завершено"
@@ -185,13 +190,12 @@ PY5
     post {
         always {
             sh '''
-                # Убиваем QEMU
-                [ -f qemu.pid ] && kill $(cat qemu.pid) || true
-                rm -f qemu.pid 2>/dev/null || true
+                [ -f qemu.pid ] && kill $(cat qemu.pid) 2>/dev/null || true
+                rm -f qemu.pid openbmc-romulus.qcow2 romulus.zip romulus.static.mtd 2>/dev/null || true
             '''
-            archiveArtifacts artifacts: '*.png, *.log', allowEmptyArchive: true
+            archiveArtifacts artifacts: '*.png, *.log, romulus.zip', allowEmptyArchive: true
         }
-        success { echo "Лабораторная работа 7 полностью выполнена!" }
+        success { echo "Лабораторная работа 7 полностью выполнена! OpenBMC + CI/CD — зелёные тесты!" }
         failure { echo "Что-то пошло не так — смотри логи и артефакты" }
     }
 }
