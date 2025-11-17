@@ -21,29 +21,31 @@ pipeline {
 }
 
         stage('Скачивание OpenBMC образа из официального CI + Chrome') {
-            steps {
-                sh '''
-                    set -e
-                    echo "Скачиваем свежий образ romulus из официального OpenBMC CI..."
-                    wget -q "https://jenkins.openbmc.org/job/ci-openbmc/lastSuccessfulBuild/distro=ubuntu,label=docker-builder,target=romulus/artifact/openbmc/build/tmp/deploy/images/romulus/*zip*/romulus.zip" -O romulus.zip
-                    
-                    echo "Распаковка и конвертация в qcow2..."
-                    unzip -q romulus.zip
-                    qemu-img convert -f raw -O qcow2 romulus.static.mtd openbmc-romulus.qcow2
-                    
-                    # Chrome + Chromedriver
-                    wget -q https://storage.googleapis.com/chrome-for-testing-public/131.0.6778.85/linux64/chrome-linux64.zip
-                    unzip -q chrome-linux64.zip
-                    chmod +x chrome-linux64/chrome
+    steps {
+        sh '''
+            set -e
+            echo "Скачиваем свежий образ romulus из официального OpenBMC CI..."
+            wget -q "https://jenkins.openbmc.org/job/ci-openbmc/lastSuccessfulBuild/distro=ubuntu,label=docker-builder,target=romulus/artifact/openbmc/build/tmp/deploy/images/romulus/*zip*/romulus.zip" -O romulus.zip
 
-                    wget -q https://storage.googleapis.com/chrome-for-testing-public/131.0.6778.85/linux64/chromedriver-linux64.zip
-                    unzip -q chromedriver-linux64.zip
-                    mv chromedriver-linux64/chromedriver chromedriver-linux64/ 2>/dev/null || true
-                    chmod +x chromedriver-linux64/chromedriver
-                '''
-            }
-        }
+            echo "Распаковываем архив..."
+            unzip -j -q romulus.zip "*.static.mtd"   # берём любой .static.mtd файл
 
+            echo "Определяем имя MTD-файла и конвертируем в qcow2..."
+            MTD_FILE=$(ls *.static.mtd | head -1)
+            echo "Найден файл: $MTD_FILE"
+            qemu-img convert -f raw -O qcow2 "$MTD_FILE" openbmc-romulus.qcow2
+
+            # Chrome + Chromedriver (актуальные на ноябрь 2025)
+            wget -q https://storage.googleapis.com/chrome-for-testing-public/131.0.6778.85/linux64/chrome-linux64.zip
+            unzip -q chrome-linux64.zip
+            chmod +x chrome-linux64/chrome
+
+            wget -q https://storage.googleapis.com/chrome-for-testing-public/131.0.6778.85/linux64/chromedriver-linux64.zip
+            unzip -q chromedriver-linux64.zip
+            chmod +x chromedriver-linux64/chromedriver
+        '''
+    }
+}
         stage('Запуск OpenBMC в QEMU') {
             steps {
                 sh '''
