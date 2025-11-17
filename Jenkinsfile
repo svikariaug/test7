@@ -1,38 +1,45 @@
 pipeline {
     agent any
-    
+
     stages {
         stage('OpenBMC CI/CD — Redfish + WebUI тесты') {
+            // ←←← ВАЖНО: запускаем всё в отдельном чистом ubuntu-контейнере
+            agent {
+                docker {
+                    image 'ubuntu:22.04'
+                    args '--user root'   // чтобы сразу был root и не было проблем с правами
+                    reuseNode true
+                }
+            }
             steps {
                 sh '''
                     set -e
-                    
-                    echo "Установка всего необходимого (с sudo)..."
-                    
-                    # Эти команды теперь работают, потому что мы поставили sudo один раз
-                    sudo apt-get update
-                    sudo apt-get install -y --no-install-recommends \\
+
+                    echo "Установка всего необходимого в чистом контейнере..."
+                    apt-get update
+                    apt-get install -y --no-install-recommends \\
                         python3 python3-pip wget unzip ca-certificates \\
                         libnss3 libgtk-3-0 libasound2 libatk-bridge2.0-0 libdrm2 \\
                         libxcomposite1 libxdamage1 libxrandr2 libgbm1 libpango-1.0-0 \\
                         libcairo2 libcups2 libatk1.0-0 fonts-liberation
-                    
+
                     pip3 install --no-cache-dir requests selenium
-                    
+
                     echo "Скачивание Chrome + Chromedriver..."
                     wget -q https://storage.googleapis.com/chrome-for-testing-public/131.0.6778.85/linux64/chrome-linux64.zip
                     unzip -q chrome-linux64.zip
                     chmod +x chrome-linux64/chrome
-                    
+
                     wget -q https://storage.googleapis.com/chrome-for-testing-public/131.0.6778.85/linux64/chromedriver-linux64.zip
                     unzip -q chromedriver-linux64.zip
                     mv chromedriver-linux64/chromedriver chromedriver-linux64/ 2>/dev/null || true
                     chmod +x chromedriver-linux64/chromedriver
-                    
+
+                    # ←←← ВСЁ ОСТАЛЬНОЕ — ТОЧНО ТАКОЕ ЖЕ, КАК У ТЕБЯ БЫЛО
                     echo "===================================================="
                     echo " ЗАПУСК ТЕСТОВ OPENBMC"
                     echo "===================================================="
-                    
+
                     echo "1/5 Redfish: Аутентификация"
                     python3 - <<'PY1'
 import requests, sys
@@ -130,7 +137,7 @@ PY5
             }
         }
     }
-    
+
     post {
         always { cleanWs() }
         success { echo "Готово, брат! Победа!" }
