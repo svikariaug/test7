@@ -64,14 +64,4 @@ pipeline {
             }
         }
     }
-
-    post {
-        always {
-            archiveArtifacts artifacts: '*.txt', allowEmptyArchive: true
-            echo "ЛАБОРАТОРНАЯ РАБОТА 7 УСПЕШНО ЗАВЕРШЕНА"
-        }
-        success {
-            echo "ВСЕ ЭТАПЫ ПРОЙДЕНЫ — 100/100"
-        }
-    }
 }
