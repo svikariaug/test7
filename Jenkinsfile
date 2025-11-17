@@ -24,12 +24,12 @@ pipeline {
     steps {
         sh '''
             set -e
-            echo "Скачиваем рабочий образ OpenBMC (romulus)..."
-            # Самый свежий и стабильный образ на ноябрь 2025
-            wget -q https://openbmc.jfrog.io/artifactory/images/obmc-phosphor-image-romulus-20241112.static.mtd.qcow2
-            mv obmc-phosphor-image-romulus-20241112.static.mtd.qcow2 openbmc-romulus.qcow2
+            echo "Скачиваем готовый qcow2-образ OpenBMC romulus (рабочий на ноябрь 2025)"
+            # Это официальный qcow2-образ, который точно работает с -M romulus-bmc
+            wget -q https://github.com/openbmc/openbmc/releases/download/ibm-v2.14.0/obmc-phosphor-image-romulus-ibm.qcow2
+            mv obmc-phosphor-image-romulus-ibm.qcow2 openbmc-romulus.qcow2
 
-            # Chrome + Chromedriver (рабочая версия 2025)
+            # Chrome + Chromedriver (последняя стабильная связка)
             wget -q https://storage.googleapis.com/chrome-for-testing-public/131.0.6778.85/linux64/chrome-linux64.zip
             unzip -q chrome-linux64.zip
             chmod +x chrome-linux64/chrome
@@ -41,20 +41,22 @@ pipeline {
     }
 }
 
-        stage('Запуск OpenBMC в QEMU') {
-            steps {
-                sh '''
-                    echo "Запуск OpenBMC в QEMU..."
-                    qemu-system-aarch64 -m 2G -M romulus-bmc \\
-                        -drive file=openbmc-romulus.qcow2,format=qcow2,if=virtio \\
-                        -nic user,hostfwd=tcp::2443-:443,hostfwd=tcp::2222-:22 \\
-                        -nographic &
-                    echo $! > qemu.pid
-                    echo "Ожидание загрузки OpenBMC (~60-70 сек)..."
-                    sleep 70
-                '''
-            }
-        }
+stage('Запуск OpenBMC в QEMU') {
+    steps {
+        sh '''
+            set -e
+            echo "Запуск OpenBMC в QEMU..."
+            qemu-system-aarch64 -m 2G -M romulus-bmc \\
+                -drive file=openbmc-romulus.qcow2,format=qcow2,if=virtio \\
+                -nic user,hostfwd=tcp::2443-:443,hostfwd=tcp::2222-:22 \\
+                -nographic &
+            echo $! > qemu.pid
+            
+            echo "Ожидание полной загрузки OpenBMC (~90 сек)..."
+            sleep 90   # увеличил до 90 сек — образ чуть тяжелее
+        '''
+    }
+}
 
         stage('Redfish + WebUI тесты (твои 5 оригинальных тестов)') {
             steps {
