@@ -4,7 +4,6 @@ from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 
-
 def test_inventory_display():
     service = Service(executable_path="./chromedriver-linux64/chromedriver")
     options = webdriver.ChromeOptions()
