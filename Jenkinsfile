@@ -2,21 +2,23 @@ pipeline {
     agent any
 
     stages {
-        stage('Подготовка окружения') {
-            steps {
-                sh '''
-                    set -e
-                    echo "Установка зависимостей..."
-                    sudo apt-get update
-                    sudo apt-get install -y --no-install-recommends \\
-                        qemu-system-aarch64 python3 python3-pip wget unzip ca-certificates \\
-                        libnss3 libgtk-3-0 libasound2 libatk-bridge2.0-0 libdrm2 \\
-                        libxcomposite1 libxdamage1 libxrandr2 libgbm1 libpango-1.0-0 \\
-                        libcairo2 libcups2 libatk1.0-0 fonts-liberation
-                    pip3 install --no-cache-dir requests selenium
-                '''
-            }
-        }
+       stage('Подготовка окружения') {
+    steps {
+        sh '''
+            set -e
+            echo "Установка зависимостей..."
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends \\
+                qemu-system-aarch64 python3 python3-pip wget unzip ca-certificates \\
+                libnss3 libgtk-3-0 libasound2 libatk-bridge2.0-0 libdrm2 \\
+                libxcomposite1 libxdamage1 libxrandr2 libgbm1 libpango-1.0-0 \\
+                libcairo2 libcups2 libatk1.0-0 fonts-liberation
+
+            # ← ЭТА СТРОКА НОВАЯ, РАБОЧАЯ ДЛЯ DEBIAN 13
+            pip3 install --break-system-packages --no-cache-dir requests selenium
+        '''
+    }
+}
 
         stage('Скачивание OpenBMC образа + Chrome') {
             steps {
