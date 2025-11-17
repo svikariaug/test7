@@ -12,7 +12,7 @@ pipeline {
                     apt-get install -y qemu-system-arm python3-pip chromium-browser chromium-chromedriver >> deps_report.txt 2>&1
 
                     # Устанавливаем Python-пакеты
-                    pip3 install --break-system-packages selenium requests webdriver-manager || pip3 install selenium requests webdriver-manager >> deps_report.txt 2>&1
+                    pip3 install selenium requests webdriver-manager --break-system-packages >> deps_report.txt 2>&1 || pip3 install selenium requests webdriver-manager >> deps_report.txt 2>&1
 
                     # Проверяем, что всё на месте
                     which qemu-system-arm >> deps_report.txt
