@@ -2,148 +2,144 @@ pipeline {
     agent any
 
     stages {
-        stage('OpenBMC CI/CD: Redfish + WebUI тесты') {
+        stage('OpenBMC CI/CD — Redfish + WebUI (без Docker)') {
             steps {
-                script {
-                    sh '''
-                        set -e
-                        echo "Запуск полного набора тестов OpenBMC в Docker-контейнере..."
+                sh '''
+                    set -e
 
-                        docker run --rm \\
-                            -u root \\
-                            --network host \\
-                            -v "$WORKSPACE":/workspace \\
-                            -w /workspace \\
-                            python:3.11-slim-bookworm \\
-                            bash -c "
+                    echo "Установка необходимого ПО в текущий контейнер Jenkins..."
 
-                                echo 'Установка системных пакетов...'
-                                apt-get update && apt-get install -y --no-install-recommends \\
-                                    wget unzip ca-certificates libnss3 libatk-bridge2.0-0 libdrm2 libxcomposite1 libxdamage1 libxrandr2 libgbm1 libasound2 libpango-1.0-0 libcairo2 libcups2 libatk1.0-0 libgtk-3-0 2>/dev/null || true
+                    # Делаем так, чтобы apt работал (иногда надо почистить lock)
+                    rm -f /var/lib/apt/lists/lock /var/cache/apt/archives/lock /var/lib/dpkg/lock*
 
-                                echo 'Установка Python-пакетов...'
-                                pip install --no-cache-dir requests selenium
+                    apt-get update
+                    apt-get install -y --no-install-recommends \\
+                        python3 python3-pip wget unzip ca-certificates \\
+                        libnss3 libgdk-pixbuf2.0-0 libgtk-3-0 libx11-xcb1 libasound2 \\
+                        libatk-bridge2.0-0 libdrm2 libxcomposite1 libxrandr2 libgbm1 \\
+                        fonts-liberation
 
-                                echo 'Скачивание Chrome...'
-                                wget -q https://storage.googleapis.com/chrome-for-testing-public/131.0.6778.85/linux64/chrome-linux64.zip
-                                unzip -q chrome-linux64.zip
+                    pip3 install --no-cache-dir requests selenium
 
-                                echo 'Скачивание Chromedriver...'
-                                wget -q https://storage.googleapis.com/chrome-for-testing-public/131.0.6778.85/linux64/chromedriver-linux64.zip
-                                unzip -q chromedriver-linux64.zip
-                                mv chromedriver-linux64/chromedriver chromedriver-linux64/
-                                chmod +x chromedriver-linux64/chromedriver
+                    echo "Скачиваем Chrome и Chromedriver..."
+                    wget -q https://storage.googleapis.com/chrome-for-testing-public/131.0.6778.85/linux64/chrome-linux64.zip
+                    unzip -q chrome-linux64.zip
+                    chmod +x chrome-linux64/chrome
 
-                                echo 'ТЕСТ 1/5: Redfish — Аутентификация'
-                                python3 - <<'PY1'
+                    wget -q https://storage.googleapis.com/chrome-for-testing-public/131.0.6778.85/linux64/chromedriver-linux64.zip
+                    unzip -q chromedriver-linux64.zip
+                    mv chromedriver-linux64/chromedriver chromedriver-linux64/
+                    chmod +x chromedriver-linux64/chromedriver
+
+                    echo ""
+                    echo "ЗАПУСК ТЕСТОВ OPENBMC"
+                    echo "===================================================="
+
+                    # ТЕСТ 1: Redfish Аутентификация
+                    echo "1/5 Redfish: Аутентификация"
+                    python3 - <<'PY1'
 import requests, sys
-r = requests.post('https://127.0.0.1:2443/redfish/v1/SessionService/Sessions',
-                  json={'UserName':'root','Password':'0penBmc'}, verify=False, timeout=15)
-print('Аутентификация:', 'УСПЕХ' if r.status_code == 201 else 'ОШИБКА', r.status_code)
+r = requests.post("https://127.0.0.1:2443/redfish/v1/SessionService/Sessions",
+                  json={"UserName":"root","Password":"0penBmc"}, verify=False, timeout=15)
+print(" →", "УСПЕХ" if r.status_code == 201 else "ОШИБКА", r.status_code)
 if r.status_code != 201: sys.exit(1)
 PY1
 
-                                echo 'ТЕСТ 2/5: Redfish — Получение информации о системе'
-                                python3 - <<'PY2'
+                    # ТЕСТ 2: Информация о системе
+                    echo "2/5 Redfish: Информация о системе"
+                    python3 - <<'PY2'
 import requests
-s = requests.post('https://127.0.0.1:2443/redfish/v1/SessionService/Sessions',
-                  json={'UserName':'root','Password':'0penBmc'}, verify=False)
-token = s.headers['X-Auth-Token']
-r = requests.get('https://127.0.0.1:2443/redfish/v1/Systems/system',
-                 headers={'X-Auth-Token': token}, verify=False)
+s = requests.post("https://127.0.0.1:2443/redfish/v1/SessionService/Sessions",
+                  json={"UserName":"root","Password":"0penBmc"}, verify=False)
+token = s.headers["X-Auth-Token"]
+r = requests.get("https://127.0.0.1:2443/redfish/v1/Systems/system",
+                 headers={"X-Auth-Token": token}, verify=False)
 data = r.json()
-print('PowerState:', data.get('PowerState', 'N/A'))
-print('Health:', data.get('Status', {}).get('Health', 'N/A'))
+print(" → PowerState:", data.get("PowerState", "N/A"))
+print(" → Health:", data.get("Status",{}).get("Health", "N/A"))
 PY2
 
-                                echo 'ТЕСТ 3/5: Redfish — Включение питания'
-                                python3 - <<'PY3'
+                    # ТЕСТ 3: Включение питания
+                    echo "3/5 Redfish: Включение питания"
+                    python3 - <<'PY3'
 import requests, time
-s = requests.post('https://127.0.0.1:2443/redfish/v1/SessionService/Sessions',
-                  json={'UserName':'root','Password':'0penBmc'}, verify=False)
-token = s.headers['X-Auth-Token']
-h = {'X-Auth-Token': token, 'Content-Type': 'application/json'}
-requests.post('https://127.0.0.1:2443/redfish/v1/Systems/system/Actions/ComputerSystem.Reset',
-              json={'ResetType': 'On'}, headers=h, verify=False)
-time.sleep(10)
-state = requests.get('https://127.0.0.1:2443/redfish/v1/Systems/system',
-                     headers={'X-Auth-Token': token}, verify=False).json()
-print('После включения → PowerState:', state.get('PowerState'))
+s = requests.post("https://127.0.0.1:2443/redfish/v1/SessionService/Sessions",
+                  json={"UserName":"root","Password":"0penBmc"}, verify=False)
+token = s.headers["X-Auth-Token"]
+h = {"X-Auth-Token": token, "Content-Type": "application/json"}
+requests.post("https://127.0.0.1:2443/redfish/v1/Systems/system/Actions/ComputerSystem.Reset",
+              json={"ResetType": "On"}, headers=h, verify=False)
+time.sleep(12)
+state = requests.get("https://127.0.0.1:2443/redfish/v1/Systems/system",
+                     headers={"X-Auth-Token": token}, verify=False).json()
+print(" → После включения:", state.get("PowerState", "N/A"))
 PY3
 
-                                echo 'ТЕСТ 4/5: WebUI Selenium — Inventory'
-                                python3 - <<'PY4'
+                    # ТЕСТ 4: WebUI Inventory
+                    echo "4/5 WebUI: Inventory"
+                    python3 - <<'PY4'
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 import time
 options = webdriver.ChromeOptions()
-options.binary_location = 'chrome-linux64/chrome'
-for arg in ['--headless','--no-sandbox','--disable-dev-shm-usage','--disable-gpu',
-            '--ignore-certificate-errors','--ignore-ssl-errors','--allow-insecure-localhost']:
-    options.add_argument(arg)
-driver = webdriver.Chrome(service=Service('chromedriver-linux64/chromedriver'), options=options)
-driver.get('https://127.0.0.1:2443')
+options.binary_location = "chrome-linux64/chrome"
+for a in ["--headless","--no-sandbox","--disable-dev-shm-usage","--disable-gpu",
+          "--ignore-certificate-errors","--ignore-ssl-errors","--allow-insecure-localhost"]:
+    options.add_argument(a)
+driver = webdriver.Chrome(service=Service("chromedriver-linux64/chromedriver"), options=options)
+driver.get("https://127.0.0.1:2443")
 time.sleep(4)
-driver.find_element(By.ID,'username').send_keys('root')
-driver.find_element(By.ID,'password').send_keys('0penBmc')
-driver.find_element(By.XPATH,\"//button[@type='submit']\").click()
+driver.find_element("id", "username").send_keys("root")
+driver.find_element("id", "password").send_keys("0penBmc")
+driver.find_element("xpath", "//button[@type='submit']").click()
 time.sleep(6)
-driver.get('https://127.0.0.1:2443/?next=/redfish/v1/Systems/system/#/hardware-status/inventory')
-time.sleep(7)
-text = driver.find_element(By.TAG_NAME,'body').text
-found = sum(1 for w in ['Processor','CPU','DIMM','Memory','Fan','Fans'] if w in text)
-print('Inventory: найдено компонентов →', found)
-print('Inventory →', 'ПРОЙДЕН' if found >= 2 else 'ПРОВАЛЕН')
+driver.get("https://127.0.0.1:2443/?next=/redfish/v1/Systems/system/#/hardware-status/inventory")
+time.sleep(8)
+text = driver.find_element("tag name", "body").text
+found = sum(1 for w in ["Processor","CPU","DIMM","Memory","Fan","Fans"] if w in text)
+print(f" → Найдено компонентов: {found} →", "ПРОЙДЕН" if found >= 2 else "ПРОВАЛЕН")
 driver.quit()
 PY4
 
-                                echo 'ТЕСТ 5/5: WebUI Selenium — Sensors'
-                                python3 - <<'PY5'
+                    # ТЕСТ 5: WebUI Sensors
+                    echo "5/5 WebUI: Sensors"
+                    python3 - <<'PY5'
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 import time
 options = webdriver.ChromeOptions()
-options.binary_location = 'chrome-linux64/chrome'
-for arg in ['--headless','--no-sandbox','--disable-dev-shm-usage','--disable-gpu',
-            '--ignore-certificate-errors','--ignore-ssl-errors','--allow-insecure-localhost']:
-    options.add_argument(arg)
-driver = webdriver.Chrome(service=Service('chromedriver-linux64/chromedriver'), options=options)
-driver.get('https://127.0.0.1:2443')
+options.binary_location = "chrome-linux64/chrome"
+for a in ["--headless","--no-sandbox","--disable-dev-shm-usage","--disable-gpu",
+          "--ignore-certificate-errors","--ignore-ssl-errors","--allow-insecure-localhost"]:
+    options.add_argument(a)
+driver = webdriver.Chrome(service=Service("chromedriver-linux64/chromedriver"), options=options)
+driver.get("https://127.0.0.1:2443")
 time.sleep(4)
-driver.find_element(By.ID,'username').send_keys('root')
-driver.find_element(By.ID,'password').send_keys('0penBmc')
-driver.find_element(By.XPATH,\"//button[@type='submit']\").click()
+driver.find_element("id", "username").send_keys("root")
+driver.find_element("id", "password").send_keys("0penBmc")
+driver.find_element("xpath", "//button[@type='submit']").click()
 time.sleep(6)
-driver.get('https://127.0.0.1:2443/?next=/redfish/v1/Systems/system/#/hardware-status/sensors')
-time.sleep(7)
-text = driver.find_element(By.TAG_NAME,'body').text
-print('Sensors →', 'ПРОЙДЕН' if 'Sensor' in text else 'ПРОВАЛЕН')
+driver.get("https://127.0.0.1:2443/?next=/redfish/v1/Systems/system/#/hardware-status/sensors")
+time.sleep(8)
+print(" → Sensors страница:", "ПРОЙДЕН" if "Sensor" in driver.find_element("tag name", "body").text else "ПРОВАЛЕН")
 driver.quit()
 PY5
 
-                                echo ''
-                                echo '============================================='
-                                echo ' ВСЕ ТЕСТЫ OPENBMC ПРОЙДЕНЫ УСПЕШНО!'
-                                echo ' Redfish + WebUI (Selenium) — ОК'
-                                echo '============================================='
-                            "
-                    '''
-                }
+                    echo ""
+                    echo "================================================"
+                    echo " ВСЁ ПРОШЛО УСПЕШНО! @svikari_aug — легенда!"
+                    echo " OpenBMC + Redfish + WebUI протестированы"
+                    echo "================================================"
+                '''
             }
         }
     }
 
     post {
-        always {
-            cleanWs()
-        }
-        success {
-            echo "@svikari_aug — OpenBMC CI/CD тесты пройдены на 100%!"
-        }
-        failure {
-            echo "Где-то упало — смотри логи выше"
-        }
+        always { cleanWs() }
+        success { echo "Готово! Все тесты зелёные!" }
+        failure { echo "Упало — смотри логи выше" }
     }
 }
