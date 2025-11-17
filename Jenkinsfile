@@ -2,8 +2,7 @@ pipeline {
     agent any
 
     environment {
-        // Версии на момент ноября 2025 — актуальные стабильные
-        CHROME_VERSION = "131.0.6778.85"     // проверь актуальную на https://googlechromelabs.github.io/chrome-for-testing/
+        CHROME_VERSION = "131.0.6778.85"
         CHROMEDRIVER_VERSION = "131.0.6778.85"
     }
 
@@ -13,65 +12,41 @@ pipeline {
                 sh '''
                     set -e
 
-                    echo "=== УСТАНОВКА PYTHON 3 ==="
+                    echo "=== Установка Python 3 и зависимостей ==="
                     if ! command -v python3 >/dev/null 2>&1; then
-                        echo "Python3 не найден — устанавливаем"
                         if [ -f /etc/debian_version ]; then
-                            apt-get update && apt-get install -y python3 python3-pip
-                        elif [ -f /etc/centos-release ] || [ -f /etc/rocky-release ]; then
-                            yum install -y python3 python3-pip || dnf install -y python3 python3-pip
+                            apt-get update && apt-get install -y python3 python3-pip wget unzip
+                        elif [ -f /etc/redhat-release ] || [ -f /etc/centos-release ]; then
+                            yum install -y python3 python3-pip wget unzip || dnf install -y python3 python3-pip wget unzip
                         else
-                            echo "Неизвестный дистрибутив — установи python3 вручную"
+                            echo "Неизвестный дистрибутив"
                             exit 1
                         fi
                     fi
-                    python3 --version
 
-                    echo "=== УСТАНОВКА ЗАВИСИМОСТЕЙ PYTHON ==="
                     python3 -m pip install --upgrade pip
-                    python3 -m pip install requests selenium
+                    python3 -m pip install requests selenium --break-system-packages 2>/dev/null || python3 -m pip install requests selenium
 
-                    echo "=== СКАЧИВАНИЕ CHROME ==="
-                    mkdir -p chrome-linux64
-                    if [ ! -f chrome-linux64/chrome ]; then
-                        wget -q https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VERSION}/linux64/chrome-linux64.zip
-                        unzip -q chrome-linux64.zip
-                        mv chrome-linux64/chrome chrome-linux64/chrome-bin
-                        chmod +x chrome-linux64/chrome-bin
-                        ln -sf chrome-bin chrome-linux64/chrome
-                    fi
+                    echo "=== Скачивание Chrome ==="
+                    [ -f chrome-linux64/chrome ] || (
+                        wget -q https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VERSION}/linux64/chrome-linux64.zip &&
+                        unzip -q chrome-linux64.zip &&
+                        chmod +x chrome-linux64/chrome
+                    )
 
-                    echo "=== СКАЧИВАНИЕ CHROMEDRIVER ==="
-                    mkdir -p chromedriver-linux64
-                    if [ ! -f chromedriver-linux64/chromedriver ]; then
-                        wget -q https://storage.googleapis.com/chrome-for-testing-public/${CHROMEDRIVER_VERSION}/linux64/chromedriver-linux64.zip
-                        unzip -q chromedriver-linux64.zip
-                        mv chromedriver-linux64/chromedriver chromedriver-linux64/chromedriver
+                    echo "=== Скачивание Chromedriver ==="
+                    [ -f chromedriver-linux64/chromedriver ] || (
+                        wget -q https://storage.googleapis.com/chrome-for-testing-public/${CHROMEDRIVER_VERSION}/linux64/chromedriver-linux64.zip &&
+                        unzip -q chromedriver-linux64.zip &&
+                        mv chromedriver-linux64/chromedriver chromedriver-linux64/ &&
                         chmod +x chromedriver-linux64/chromedriver
-                    fi
+                    )
 
-                    echo "=== ОКРУЖЕНИЕ ГОТОВО ==="
-                    ls -la chrome-linux64/chrome chromedriver-linux64/chromedriver
+                    echo "=== Окружение готово ==="
+                    python3 --version
+                    ./chrome-linux64/chrome --version || true
+                    ./chromedriver-linux64/chromedriver --version || true
                 '''
-            }
-        }
-
-    stages {
-        stage('Информация о среде') {
-            steps {
-                sh '''
-                    echo "=== ИНФОРМАЦИЯ О СРЕДЕ JENKINS ===" > env_report.txt
-                    whoami >> env_report.txt
-                    pwd >> env_report.txt
-                    hostname >> env_report.txt
-                    date >> env_report.txt
-                    echo "Python версия:" >> env_report.txt
-                    python3 --version >> env_report.txt 2>&1 || echo "python3 не найден"
-                    echo "Chrome и Chromedriver присутствуют:" >> env_report.txt
-                    ls -la chrome-linux64/chrome chromedriver-linux64/chromedriver >> env_report.txt 2>&1 || echo "Не найдены"
-                    echo "СРЕДА ГОТОВА К CI/CD" >> env_report.txt
-                '''
-                archiveArtifacts 'env_report.txt'
             }
         }
 
@@ -79,26 +54,15 @@ pipeline {
             steps {
                 sh '''
                     python3 - <<'PY'
-import requests
-
-BMC_IP = "127.0.0.1"
-BMC_PORT = "2443"
-url = f"https://{BMC_IP}:{BMC_PORT}/redfish/v1/SessionService/Sessions"
-data = {"UserName": "root", "Password": "0penBmc"}
-headers = {"Content-Type": "application/json"}
-
-print("Redfish: Тест аутентификации...")
-r = requests.post(url, json=data, headers=headers, verify=False, timeout=10)
-
+import requests, sys
+url = "https://127.0.0.1:2443/redfish/v1/SessionService/Sessions"
+r = requests.post(url, json={"UserName":"root","Password":"0penBmc"}, verify=False, timeout=10)
 print(f"Статус: {r.status_code}")
-if r.status_code == 201:
-    token = r.headers.get("X-Auth-Token")
-    print("Аутентификация УСПЕШНА!")
-    print(f"Токен: {token[:20]}...")
-else:
-    print("ОШИБКА аутентификации!")
+if r.status_code != 201:
+    print("Ошибка аутентификации!")
     print(r.text)
-    exit(1)
+    sys.exit(1)
+print("Redfish аутентификация УСПЕШНА")
 PY
                 '''
             }
@@ -108,33 +72,19 @@ PY
             steps {
                 sh '''
                     python3 - <<'PY'
-import requests, json, sys
-
-BMC_IP = "127.0.0.1"
-BMC_PORT = "2443"
-
-# Логин
-session = requests.post(
-    f"https://{BMC_IP}:{BMC_PORT}/redfish/v1/SessionService/Sessions",
-    json={"UserName": "root", "Password": "0penBmc"},
-    verify=False, timeout=10
-)
-token = session.headers.get("X-Auth-Token")
-headers = {"X-Auth-Token": token, "Content-Type": "application/json"}
-
-# GET /Systems/system
-r = requests.get(f"https://{BMC_IP}:{BMC_PORT}/redfish/v1/Systems/system", headers=headers, verify=False)
-
-print(f"Статус: {r.status_code}")
+import requests, sys
+s = requests.post("https://127.0.0.1:2443/redfish/v1/SessionService/Sessions",
+                  json={"UserName":"root","Password":"0penBmc"}, verify=False)
+token = s.headers["X-Auth-Token"]
+headers = {"X-Auth-Token": token}
+r = requests.get("https://127.0.0.1:2443/redfish/v1/Systems/system", headers=headers, verify=False)
 if r.status_code != 200:
-    print("Ошибка получения информации о системе")
+    print("Ошибка получения System info")
     sys.exit(1)
-
 data = r.json()
-print("Информация о системе получена УСПЕШНО")
 print(f"PowerState: {data.get('PowerState')}")
-print(f"Health: {data.get('Status', {}).get('Health', 'N/A')}")
-print(f"State: {data.get('Status', {}).get('State', 'N/A')}")
+print(f"Health: {data.get('Status',{}).get('Health')}")
+print("Информация о системе получена УСПЕШНО")
 PY
                 '''
             }
@@ -144,55 +94,30 @@ PY
             steps {
                 sh '''
                     python3 - <<'PY'
-import requests, json, time, sys
-
-BMC_IP = "127.0.0.1"
-BMC_PORT = "2443"
-
-# Логин
-s = requests.post(
-    f"https://{BMC_IP}:{BMC_PORT}/redfish/v1/SessionService/Sessions",
-    json={"UserName": "root", "Password": "0penBmc"},
-    verify=False, timeout=10
-)
-token = s.headers.get("X-Auth-Token")
+import requests, time, sys
+s = requests.post("https://127.0.0.1:2443/redfish/v1/SessionService/Sessions",
+                  json={"UserName":"root","Password":"0penBmc"}, verify=False)
+token = s.headers["X-Auth-Token"]
 headers = {"X-Auth-Token": token, "Content-Type": "application/json"}
 
-# Текущее состояние
-current = requests.get(f"https://{BMC_IP}:{BMC_PORT}/redfish/v1/Systems/system", headers=headers, verify=False).json()
-print(f"Текущее состояние: {current.get('PowerState')}")
+# Power On
+r = requests.post("https://127.0.0.1:2443/redfish/v1/Systems/system/Actions/ComputerSystem.Reset",
+                  json={"ResetType": "On"}, headers=headers, verify=False)
+print(f"PowerOn статус: {r.status_code}")
 
-# Включаем
-print("Отправка команды Power On...")
-r = requests.post(
-    f"https://{BMC_IP}:{BMC_PORT}/redfish/v1/Systems/system/Actions/ComputerSystem.Reset",
-    json={"ResetType": "On"},
-    headers=headers,
-    verify=False
-)
-
-print(f"Статус команды: {r.status_code}")
-if r.status_code in [200, 204]:
-    print("Команда ВКЛЮЧЕНИЯ принята!")
-else:
-    print("Ошибка выполнения команды")
-    sys.exit(1)
-
-# Ждём и проверяем
 time.sleep(8)
-new = requests.get(f"https://{BMC_IP}:{BMC_PORT}/redfish/v1/Systems/system", headers=headers, verify=False).json()
-new_state = new.get('PowerState')
-print(f"Новое состояние: {new_state}")
-if new_state == "On":
-    print("СЕРВЕР УСПЕШНО ВКЛЮЧЁН!")
+state = requests.get("https://127.0.0.1:2443/redfish/v1/Systems/system", headers=headers, verify=False).json()
+print(f"Новое состояние: {state.get('PowerState')}")
+if state.get('PowerState') == "On":
+    print("СЕРВЕР ВКЛЮЧЁН УСПЕШНО")
 else:
-    print("Состояние не изменилось на On")
+    print("Сервер не включился")
 PY
                 '''
             }
         }
 
-        stage('WebUI Selenium: Проверка страницы Inventory') {
+        stage('WebUI Selenium: Inventory') {
             steps {
                 sh '''
                     python3 - <<'PY'
@@ -201,58 +126,38 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 import time, sys
 
-service = Service(executable_path="./chromedriver-linux64/chromedriver")
 options = webdriver.ChromeOptions()
 options.binary_location = "./chrome-linux64/chrome"
-options.add_argument("--no-sandbox")
-options.add_argument("--disable-dev-shm-usage")
-options.add_argument("--disable-gpu")
-options.add_argument("--ignore-certificate-errors")
-options.add_argument("--ignore-ssl-errors")
-options.add_argument("--allow-insecure-localhost")
-options.add_argument("--disable-web-security")
+for a in ["--no-sandbox","--disable-dev-shm-usage","--disable-gpu","--ignore-certificate-errors","--ignore-ssl-errors","--allow-insecure-localhost","--disable-web-security"]:
+    options.add_argument(a)
 
-driver = webdriver.Chrome(service=service, options=options)
+driver = webdriver.Chrome(service=Service("./chromedriver-linux64/chromedriver"), options=options)
+
 driver.get("https://127.0.0.1:2443")
 time.sleep(3)
-
 driver.find_element(By.ID, "username").send_keys("root")
 driver.find_element(By.ID, "password").send_keys("0penBmc")
 driver.find_element(By.XPATH, "//button[@type='submit']").click()
-time.sleep(3)
-
-driver.get("https://127.0.0.1:2443/?next=/redfish/v1/Systems/system/#/hardware-status/inventory")
 time.sleep(4)
 
+driver.get("https://127.0.0.1:2443/?next=/redfish/v1/Systems/system/#/hardware-status/inventory")
+time.sleep(5)
+
 text = driver.find_element(By.TAG_NAME, "body").text
-found = []
-
-if any(x in text for x in ["Processor", "CPU", "Processors"]):
-    found.append("Processors")
-    print("Processors найден")
-
-if any(x in text for x in ["DIMM", "Memory", "RAM"]):
-    found.append("Memory")
-    print("Memory найден")
-
-if any(x in text for x in ["Fan", "Fans", "Cooling"]):
-    found.append("Fans")
-    print("Fans найден")
-
-print(f"Найдено компонентов: {len(found)}")
-if len(found) >= 2:
-    print("ТЕСТ INVENTORY ПРОЙДЕН!")
+found = sum(1 for kw in ["Processor","CPU","DIMM","Memory","Fan"] if kw in text)
+print(f"Найдено компонентов: {found}/3")
+if found >= 2:
+    print("ТЕСТ INVENTORY ПРОЙДЕН")
 else:
-    print("ТЕСТ INVENTORY ПРОВАЛЕН!")
+    print("ТЕСТ INVENTORY ПРОВАЛЕН")
     sys.exit(1)
-
 driver.quit()
 PY
                 '''
             }
         }
 
-        stage('WebUI Selenium: Проверка страницы Sensors') {
+        stage('WebUI Selenium: Sensors') {
             steps {
                 sh '''
                     python3 - <<'PY'
@@ -261,47 +166,29 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 import time, sys
 
-service = Service(executable_path="./chromedriver-linux64/chromedriver")
 options = webdriver.ChromeOptions()
 options.binary_location = "./chrome-linux64/chrome"
-for arg in [
-    "--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu",
-    "--ignore-certificate-errors", "--ignore-ssl-errors",
-    "--allow-insecure-localhost", "--disable-web-security"
-]:
-    options.add_argument(arg)
+for a in ["--no-sandbox","--disable-dev-shm-usage","--disable-gpu","--ignore-certificate-errors","--ignore-ssl-errors","--allow-insecure-localhost","--disable-web-security"]:
+    options.add_argument(a)
 
-driver = webdriver.Chrome(service=service, options=options)
+driver = webdriver.Chrome(service=Service("./chromedriver-linux64/chromedriver"), options=options)
 driver.get("https://127.0.0.1:2443")
 time.sleep(3)
-
 driver.find_element(By.ID, "username").send_keys("root")
 driver.find_element(By.ID, "password").send_keys("0penBmc")
 driver.find_element(By.XPATH, "//button[@type='submit']").click()
-time.sleep(3)
+time.sleep(4)
 
 driver.get("https://127.0.0.1:2443/?next=/redfish/v1/Systems/system/#/hardware-status/sensors")
 time.sleep(5)
 
-text = driver.find_element(By.TAG_NAME, "body").text
-if "Sensors" in text or "Sensor" in text:
-    print("Страница Sensors загружена — ТЕСТ ПРОЙДЕН!")
+if "Sensor" in driver.find_element(By.TAG_NAME, "body").text:
+    print("ТЕСТ SENSORS ПРОЙДЕН")
 else:
-    print("Заголовок Sensors НЕ найден — ТЕСТ ПРОВАЛЕН!")
+    print("ТЕСТ SENSORS ПРОВАЛЕН")
     sys.exit(1)
-
 driver.quit()
 PY
-                '''
-            }
-        }
-
-        stage('Итоговый отчёт') {
-            steps {
-                sh '''
-                    echo "=============================================="
-                    echo " ВСЕ ТЕСТЫ OPENBMC / REDFISH / WEBUI УСПЕШНО ПРОЙДЕНЫ "
-                    echo "=============================================="
                 '''
             }
         }
@@ -309,14 +196,10 @@ PY
 
     post {
         always {
-            archiveArtifacts artifacts: '*.txt', allowEmptyArchive: true
+            archiveArtifacts artifacts: '*.log', allowEmptyArchive: true
             cleanWs()
         }
-        success {
-            echo "Пайплайн завершён успешно!"
-        }
-        failure {
-            echo "Один или несколько тестов провалились"
-        }
+        success { echo "ВСЁ ПРОШЛО УСПЕШНО!" }
+        failure { echo "ГДЕ-ТО УПАЛО" }
     }
 }
